@@ -1,0 +1,157 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8" />
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'self'; img-src 'self' https: data:; style-src 'self'; script-src 'self'" />
+  <title>YT Downloader</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <img class="logo" src="logo.svg" alt="" aria-hidden="true" />
+      <span>YT Downloader</span>
+    </div>
+    <div class="ytdlp">
+      <span class="chip" id="ytdlpVersion" title="Versão do yt-dlp">yt-dlp …</span>
+      <button class="btn ghost" id="btnUpdate">
+        <svg viewBox="0 0 24 24"><path d="M20 12a8 8 0 1 1-2.34-5.66M20 4v5h-5" /></svg>
+        Atualizar yt-dlp
+      </button>
+      <button class="btn ghost" id="btnSettings" title="Configurações">
+        <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3" /><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z" /></svg>
+        Configurações
+      </button>
+    </div>
+  </header>
+
+  <div class="banner" id="updateBanner" hidden>
+    <span id="updateBannerText"></span>
+    <button class="btn primary small" id="btnBannerUpdate">Atualizar agora</button>
+    <button class="btn ghost small" id="btnBannerClose" title="Dispensar">✕</button>
+  </div>
+
+  <main>
+    <section class="card search">
+      <div class="search-row">
+        <input id="url" type="text" spellcheck="false" placeholder="Cole ou arraste o link de um vídeo ou playlist do YouTube" />
+        <button class="btn ghost" id="btnPaste" title="Colar da área de transferência">Colar</button>
+        <button class="btn primary" id="btnAnalyze">Analisar</button>
+      </div>
+      <div class="clip-suggest" id="clipSuggest" hidden>
+        <span>Link copiado:</span>
+        <span class="clip-url" id="clipUrl"></span>
+        <button class="btn primary small" id="btnClipUse">Analisar</button>
+        <button class="btn ghost small" id="btnClipDismiss" title="Dispensar">✕</button>
+      </div>
+      <div class="hint" id="binWarning" hidden></div>
+
+      <div id="preview" hidden></div>
+    </section>
+
+    <section class="card settings-row">
+      <div class="dest">
+        <span class="label">Salvar em</span>
+        <span class="path" id="outputDir" title=""></span>
+        <button class="btn ghost small" id="btnChooseDir">Alterar</button>
+        <button class="btn ghost small" id="btnOpenDir">Abrir pasta</button>
+      </div>
+      <label class="concurrency">
+        <span class="label">Downloads simultâneos</span>
+        <select id="concurrency">
+          <option value="1">1</option>
+          <option value="2">2</option>
+          <option value="3">3</option>
+          <option value="4">4</option>
+        </select>
+      </label>
+    </section>
+
+    <section class="card lists">
+      <div class="tabs">
+        <button class="tab active" data-tab="queue">Fila <span class="count" id="queueCount">0</span></button>
+        <button class="tab" data-tab="history">Histórico <span class="count" id="historyCount">0</span></button>
+        <div class="tab-actions" data-for="queue">
+          <button class="btn ghost small" id="btnClearFinished">Limpar finalizados</button>
+          <button class="btn ghost small danger" id="btnCancelAll">Cancelar todos</button>
+        </div>
+        <div class="tab-actions" data-for="history" hidden>
+          <input id="historySearch" type="search" placeholder="Buscar no histórico" />
+          <button class="btn ghost small danger" id="btnClearHistory">Limpar histórico</button>
+        </div>
+      </div>
+      <div class="list" id="queueList"></div>
+      <div class="list" id="historyList" hidden></div>
+    </section>
+  </main>
+
+  <div class="modal" id="updateModal" hidden>
+    <div class="modal-box">
+      <h3>Atualizando yt-dlp</h3>
+      <pre id="updateLog"></pre>
+      <div class="modal-actions">
+        <button class="btn primary" id="btnCloseModal" disabled>Fechar</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal" id="settingsModal" hidden>
+    <div class="modal-box wide">
+      <h3>Configurações</h3>
+
+      <div class="set-group">
+        <div class="set-title">Cookies do navegador</div>
+        <p class="set-help">
+          Use quando o YouTube pedir "Sign in to confirm you're not a bot" ou para vídeos com restrição de idade e
+          conteúdo de membros. Você precisa estar logado no YouTube nesse navegador.
+        </p>
+        <div class="set-row">
+          <select id="setCookies">
+            <option value="none">Não usar cookies</option>
+            <option value="firefox">Firefox (recomendado)</option>
+            <option value="chrome">Chrome</option>
+            <option value="edge">Edge</option>
+            <option value="brave">Brave</option>
+            <option value="opera">Opera</option>
+            <option value="vivaldi">Vivaldi</option>
+            <option value="chromium">Chromium</option>
+            <option value="file">Arquivo cookies.txt</option>
+          </select>
+          <button class="btn ghost small" id="btnCookiesFile">Escolher arquivo…</button>
+        </div>
+        <div class="set-note" id="cookiesNote"></div>
+      </div>
+
+      <div class="set-group">
+        <div class="set-title">Download</div>
+        <label class="set-check"><input type="checkbox" id="setThumb" /> Embutir a capa (miniatura) no arquivo</label>
+        <label class="set-check"><input type="checkbox" id="setSubs" /> Embutir legendas nos vídeos</label>
+        <div class="set-row indent" id="subsOptions">
+          <span class="label">Idiomas</span>
+          <input type="text" id="setSubLangs" spellcheck="false" placeholder="pt.*,en.*" />
+          <label class="set-check inline"><input type="checkbox" id="setAutoSubs" /> Incluir legendas automáticas</label>
+        </div>
+        <label class="set-check"><input type="checkbox" id="setSponsor" /> Remover patrocínios, autopromoção e pedidos de inscrição (SponsorBlock)</label>
+      </div>
+
+      <div class="set-group">
+        <div class="set-title">App</div>
+        <label class="set-check"><input type="checkbox" id="setNotify" /> Notificar quando um download terminar com o app em segundo plano</label>
+        <label class="set-check"><input type="checkbox" id="setCheckUpdates" /> Verificar se há versão nova do yt-dlp ao abrir</label>
+        <label class="set-check"><input type="checkbox" id="setClipboard" /> Sugerir links do YouTube copiados</label>
+      </div>
+
+      <div class="modal-actions">
+        <button class="btn primary" id="btnCloseSettings">Fechar</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="drop-overlay" id="dropOverlay" hidden><div>Solte o link aqui</div></div>
+
+  <div class="toasts" id="toasts"></div>
+
+  <script src="renderer.js"></script>
+</body>
+</html>

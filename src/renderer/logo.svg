@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#ff6a4d" />
+      <stop offset="1" stop-color="#e0153f" />
+    </linearGradient>
+    <linearGradient id="shine" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#fff" stop-opacity=".22" />
+      <stop offset=".5" stop-color="#fff" stop-opacity="0" />
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="10" stdDeviation="12" flood-color="#5a0018" flood-opacity=".35" />
+    </filter>
+  </defs>
+  <!-- Fundo: quadrado arredondado com degradê e brilho no topo -->
+  <rect x="32" y="32" width="448" height="448" rx="112" fill="url(#bg)" />
+  <rect x="32" y="32" width="448" height="448" rx="112" fill="url(#shine)" />
+  <!-- Triângulo de "play" apontando para baixo (seta de download) e a base -->
+  <g filter="url(#shadow)" fill="#fff" stroke="#fff" stroke-linejoin="round">
+    <path d="M168 168 H344 L256 318 Z" stroke-width="44" />
+    <rect x="150" y="364" width="212" height="40" rx="20" stroke="none" />
+  </g>
+</svg>
