@@ -3,7 +3,7 @@ const { EventEmitter } = require('events');
 const { spawn } = require('child_process');
 const fs = require('fs');
 const path = require('path');
-const { formatArgs, optionArgs, outputTemplate, extractError, IS_WIN } = require('./ytdlp');
+const { formatArgs, premiereConvertArgs, optionArgs, outputTemplate, extractError, IS_WIN } = require('./ytdlp');
 
 const P = '__P__';
 const F = '__F__';
@@ -59,7 +59,7 @@ class DownloadQueue extends EventEmitter {
     return this.jobs.map((j) => {
       const pub = this._public(j);
       if (ACTIVE.includes(pub.status)) {
-        Object.assign(pub, { status: 'queued', part: 0, speed: null, eta: null });
+        Object.assign(pub, { status: 'queued', part: 0, phase: null, speed: null, eta: null });
       }
       return pub;
     });
@@ -70,7 +70,7 @@ class DownloadQueue extends EventEmitter {
     if (!Array.isArray(saved) || !saved.length) return;
     for (const j of saved) {
       if (!j || !j.id || !j.url || !j.outputDir) continue;
-      if (ACTIVE.includes(j.status)) Object.assign(j, { status: 'queued', part: 0, speed: null, eta: null });
+      if (ACTIVE.includes(j.status)) Object.assign(j, { status: 'queued', part: 0, phase: null, speed: null, eta: null });
       this.jobs.push(j);
     }
     this._pump();
@@ -127,7 +127,7 @@ class DownloadQueue extends EventEmitter {
   retry(id) {
     const job = this._get(id);
     if (!job || !['error', 'canceled'].includes(job.status)) return;
-    Object.assign(job, { status: 'queued', percent: 0, part: 0, error: null, speed: null, eta: null, _canceled: false, _afterFinish: false });
+    Object.assign(job, { status: 'queued', percent: 0, part: 0, phase: null, error: null, speed: null, eta: null, _canceled: false, _afterFinish: false });
     this._emit(job, true);
     this._pump();
   }
@@ -230,6 +230,7 @@ class DownloadQueue extends EventEmitter {
     ];
 
     job.status = 'downloading';
+    job.phase = null;
     job._stderr = '';
     job.error = null;
     this._emit(job, true);
@@ -255,7 +256,90 @@ class DownloadQueue extends EventEmitter {
     child.on('error', (err) => this._finish(job, 1, err.message));
     child.on('close', (code) => {
       if (buf) this._onLine(job, buf);
-      this._finish(job, code);
+      if (code === 0 && !job._canceled && !this._shuttingDown) this._afterDownload(job, child);
+      else this._finish(job, code);
+    });
+  }
+
+  /** MP4 de vídeo: garante H.264 + AAC (Premiere não importa AV1/VP9/Opus). */
+  async _afterDownload(job, child) {
+    const isVideo = !String(job.quality).startsWith('audio');
+    if (job.container !== 'mp4' || !isVideo || !job.filePath || !this.ytdlp.canConvert) {
+      return this._finish(job, 0);
+    }
+    let plan = null;
+    try {
+      const tmp = job.filePath.replace(/\.mp4$/i, '') + '.h264.tmp.mp4';
+      const probe = await this.ytdlp.probe(job.filePath);
+      const gpu = this.getSettings().gpuEncode !== false ? await this.ytdlp.detectGpuEncoder() : null;
+      plan = premiereConvertArgs(probe, job.filePath, tmp, gpu || 'libx264');
+      if (plan) Object.assign(plan, { tmp, probe });
+    } catch {
+      plan = null; // sem conseguir analisar, entrega o arquivo como veio
+    }
+    if (!plan || job._canceled || this._shuttingDown || this.procs.get(job.id) !== child) {
+      return this._finish(job, job._canceled ? 1 : 0);
+    }
+    this._convert(job, plan);
+  }
+
+  _convert(job, plan) {
+    job.status = 'processing';
+    job.phase = 'convert';
+    job.encoder = plan.encoder;
+    job.percent = 0;
+    job._stderr = '';
+    this._emit(job, true);
+
+    let ff;
+    try {
+      ff = this.ytdlp.spawnFfmpeg(plan.args);
+    } catch (err) {
+      return this._finish(job, 1, `Falha ao converter para H.264: ${err.message}`);
+    }
+    this.procs.set(job.id, ff);
+
+    let buf = '';
+    ff.stdout.on('data', (chunk) => {
+      buf += chunk.toString('utf8');
+      const lines = buf.split(/\r?\n/);
+      buf = lines.pop();
+      for (const l of lines) {
+        const m = /^out_time_(?:us|ms)=(\d+)/.exec(l);
+        if (m && plan.duration) {
+          job.percent = Math.min(100, (Number(m[1]) / 1e6 / plan.duration) * 100);
+          this._emit(job);
+        }
+      }
+    });
+    ff.stderr.on('data', (chunk) => {
+      job._stderr = (job._stderr + chunk.toString('utf8')).slice(-8000);
+    });
+    const rmTmp = () => fs.rmSync(plan.tmp, { force: true });
+    ff.on('error', (err) => {
+      try { rmTmp(); } catch { /* ignora */ }
+      this._finish(job, 1, `Falha ao converter para H.264: ${err.message}`);
+    });
+    ff.on('close', (code) => {
+      if (code === 0 && !job._canceled) {
+        try {
+          fs.renameSync(plan.tmp, job.filePath);
+          return this._finish(job, 0);
+        } catch (err) {
+          try { rmTmp(); } catch { /* ignora */ }
+          return this._finish(job, 1, `Não foi possível substituir o arquivo convertido: ${err.code || err.message}`);
+        }
+      }
+      // Cancelado ou fechando o app: o temporário é descartado; ao retomar, o yt-dlp
+      // reaproveita o arquivo já baixado e a conversão recomeça.
+      if (code !== 0 && !job._canceled && !this._shuttingDown && plan.encoder !== 'libx264') {
+        // A placa de vídeo falhou (driver, resolução não suportada...): refaz no processador.
+        try { rmTmp(); } catch { /* ignora */ }
+        return this._convert(job, { ...premiereConvertArgs(plan.probe, job.filePath, plan.tmp, 'libx264'), tmp: plan.tmp, probe: plan.probe });
+      }
+      setTimeout(() => { try { rmTmp(); } catch { /* ignora */ } }, 1000);
+      const lines = (job._stderr || '').trim().split(/\r?\n/);
+      this._finish(job, code || 1, `Falha ao converter para H.264: ${lines[lines.length - 1] || 'erro do ffmpeg'}`);
     });
   }
 
@@ -300,6 +384,8 @@ class DownloadQueue extends EventEmitter {
     if (this._shuttingDown && !job._canceled) return;
     job.speed = null;
     job.eta = null;
+    job.phase = null;
+    job.encoder = null;
 
     if (job._canceled) {
       job.status = 'canceled';

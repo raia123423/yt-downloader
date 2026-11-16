@@ -1,7 +1,7 @@
 {
   "name": "yt-downloader",
   "productName": "YT Downloader",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "App desktop para baixar vídeos do YouTube usando yt-dlp",
   "main": "src/main/main.js",
   "author": "RyqR",

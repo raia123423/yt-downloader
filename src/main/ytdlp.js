@@ -90,12 +90,58 @@ class YtDlp {
     this.getSettings = getSettings || (() => ({}));
     this.ytdlpPath = path.join(userBinDir, exe('yt-dlp'));
     this.ffmpegPath = path.join(bundledDir, exe('ffmpeg'));
+    this.ffprobePath = path.join(bundledDir, exe('ffprobe'));
     this.denoPath = path.join(bundledDir, exe('deno'));
     this.version = null;
   }
 
   get hasFfmpeg() {
     return fs.existsSync(this.ffmpegPath);
+  }
+
+  get canConvert() {
+    return this.hasFfmpeg && fs.existsSync(this.ffprobePath);
+  }
+
+  /** Lê os streams de um arquivo de mídia com o ffprobe. */
+  async probe(file) {
+    const args = ['-v', 'error', '-print_format', 'json', '-show_streams', '-show_format', file];
+    const { code, stdout } = await runCapture(this.ffprobePath, args, { timeoutMs: 60000 });
+    if (code !== 0) return null;
+    try {
+      return JSON.parse(stdout);
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Descobre qual codificador H.264 da placa de vídeo funciona nesta máquina
+   * (NVIDIA, Intel ou AMD) com uma codificação de teste. O resultado fica em cache.
+   * Retorna null se nenhum funcionar (usa o processador).
+   */
+  detectGpuEncoder() {
+    if (!this._gpuEncoder) {
+      this._gpuEncoder = (async () => {
+        if (!this.hasFfmpeg) return null;
+        for (const enc of GPU_ENCODERS) {
+          const args = ['-v', 'error', '-f', 'lavfi', '-i', 'testsrc2=size=640x360:rate=30', '-t', '0.5',
+            '-c:v', enc, '-pix_fmt', 'nv12', '-f', 'null', '-'];
+          try {
+            const { code } = await runCapture(this.ffmpegPath, args, { timeoutMs: 20000 });
+            if (code === 0) return enc;
+          } catch {
+            /* tenta o próximo */
+          }
+        }
+        return null;
+      })();
+    }
+    return this._gpuEncoder;
+  }
+
+  spawnFfmpeg(args) {
+    return spawn(this.ffmpegPath, args, { env: CHILD_ENV, windowsHide: true });
   }
 
   get hasDeno() {
@@ -247,12 +293,13 @@ function normalizeInfo(info) {
     const size = f.filesize || f.filesize_approx || 0;
     const cur = byHeight.get(f.height) || { height: f.height, fps: 0, size: 0 };
     cur.fps = Math.max(cur.fps, f.fps || 0);
+    if (/^(avc1|h264)/i.test(f.vcodec)) cur.h264 = true;
     cur.size = Math.max(cur.size, size);
     byHeight.set(f.height, cur);
   }
   const qualities = [...byHeight.values()]
     .sort((a, b) => b.height - a.height)
-    .map((q) => ({ height: q.height, fps: q.fps, approxSize: q.size ? q.size + audioSize : null }));
+    .map((q) => ({ height: q.height, fps: q.fps, h264: !!q.h264, approxSize: q.size ? q.size + audioSize : null }));
 
   return {
     type: 'video',
@@ -289,13 +336,71 @@ function formatArgs(quality, container = 'mp4', audioLang = null) {
   }
   const h = quality === 'best' ? null : Number(quality);
   const lim = h ? `[height<=${h}]` : '';
-  let fmt;
+  const fmt = `${withLang((l) => `bv*${lim}+ba${l}`)}/b${lim}/b`;
   if (container === 'mp4') {
-    fmt = `${withLang((l) => `bv*${lim}[ext=mp4]+ba[ext=m4a]${l}/bv*${lim}+ba${l}`)}/b${lim}/b`;
-  } else {
-    fmt = `${withLang((l) => `bv*${lim}+ba${l}`)}/b${lim}/b`;
+    // Premiere não abre AV1/VP9/Opus: na mesma resolução, prefere H.264 + AAC.
+    // Se a resolução escolhida só existir em AV1/VP9, o arquivo é convertido depois.
+    const res = h ? `res:${h}` : 'res';
+    return ['-f', fmt, '-S', `${res},fps,vcodec:h264,acodec:aac,ext:mp4:m4a`, '--merge-output-format', 'mp4'];
   }
   return ['-f', fmt, '--merge-output-format', container];
+}
+
+// Codificadores H.264 por hardware, na ordem de preferência.
+const GPU_ENCODERS = ['h264_nvenc', 'h264_qsv', 'h264_amf'];
+
+// Opções de qualidade de cada codificador (alta qualidade, boa para edição).
+// "i" é o índice do stream de saída, para as opções valerem só para o vídeo.
+const ENCODER_OPTS = {
+  libx264: (i) => [`-preset:${i}`, 'faster', `-crf:${i}`, '18', `-pix_fmt:${i}`, 'yuv420p'],
+  h264_nvenc: (i) => [`-preset:${i}`, 'p5', `-tune:${i}`, 'hq', `-rc:${i}`, 'vbr', `-cq:${i}`, '23', `-b:${i}`, '0',
+    `-spatial-aq:${i}`, '1', `-pix_fmt:${i}`, 'nv12'],
+  h264_qsv: (i) => [`-preset:${i}`, 'medium', `-global_quality:${i}`, '22', `-pix_fmt:${i}`, 'nv12'],
+  h264_amf: (i) => [`-quality:${i}`, 'quality', `-rc:${i}`, 'cqp', `-qp_i:${i}`, '18', `-qp_p:${i}`, '20', `-qp_b:${i}`, '22',
+    `-pix_fmt:${i}`, 'nv12'],
+};
+
+// Codecs que o Premiere Pro importa sem problemas em MP4.
+const PREMIERE_VIDEO = ['h264'];
+const PREMIERE_AUDIO = ['aac', 'mp3'];
+
+/**
+ * Decide se um MP4 precisa ser convertido para abrir no Premiere e monta os
+ * argumentos do ffmpeg. Retorna null se o arquivo já é compatível.
+ * Só o vídeo principal é recodificado (H.264); áudio AAC, capa e legendas são copiados.
+ */
+function premiereConvertArgs(probe, input, output, encoder = 'libx264') {
+  const encOpts = ENCODER_OPTS[encoder] || ENCODER_OPTS.libx264;
+  const streams = (probe && probe.streams) || [];
+  const isCover = (s) => s.codec_type === 'video' && s.disposition && s.disposition.attached_pic;
+  const video = streams.filter((s) => s.codec_type === 'video' && !isCover(s));
+  const audio = streams.filter((s) => s.codec_type === 'audio');
+  const badVideo = video.some((s) => !PREMIERE_VIDEO.includes(s.codec_name));
+  const badAudio = audio.some((s) => !PREMIERE_AUDIO.includes(s.codec_name));
+  if (!video.length || (!badVideo && !badAudio)) return null;
+
+  const args = ['-hide_banner', '-nostats', '-y', '-i', input, '-map_metadata', '0'];
+  const codecs = [];
+  let out = 0;
+  for (const s of streams) {
+    let c;
+    if (s.codec_type === 'video' && !isCover(s)) {
+      c = PREMIERE_VIDEO.includes(s.codec_name)
+        ? ['copy']
+        : [ENCODER_OPTS[encoder] ? encoder : 'libx264', ...encOpts(out)];
+    } else if (s.codec_type === 'audio') {
+      c = PREMIERE_AUDIO.includes(s.codec_name) ? ['copy'] : ['aac', '-b:' + out, '256k'];
+    } else if (isCover(s) || s.codec_type === 'subtitle') {
+      c = ['copy'];
+    } else {
+      continue; // streams de dados não cabem no MP4
+    }
+    args.push('-map', `0:${s.index}`);
+    codecs.push(`-c:${out}`, ...c);
+    out += 1;
+  }
+  args.push(...codecs, '-movflags', '+faststart', '-progress', 'pipe:1', output);
+  return { args, encoder, video: badVideo, audio: badAudio, duration: Number(probe.format && probe.format.duration) || null };
 }
 
 const SPONSOR_CATEGORIES = 'sponsor,selfpromo,interaction';
@@ -331,6 +436,7 @@ function outputTemplate(job) {
 module.exports = {
   YtDlp,
   formatArgs,
+  premiereConvertArgs,
   optionArgs,
   outputTemplate,
   compareVersions,

@@ -31,6 +31,7 @@ const DEFAULT_SETTINGS = {
   subLangs: 'pt.*,en.*',
   autoSubs: false,
   sponsorBlock: false,
+  gpuEncode: true,
   notify: true,
   checkUpdates: true,
   watchClipboard: true,

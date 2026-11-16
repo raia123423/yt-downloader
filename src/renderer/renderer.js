@@ -110,7 +110,9 @@ function qualityOptions(info) {
     for (const q of info.qualities) {
       const fps = q.fps > 30 ? Math.round(q.fps) : '';
       const size = q.approxSize ? ` · ~${fmtBytes(q.approxSize)}` : '';
-      opts.push({ value: String(q.height), label: `${q.height}p${fps}${size}` });
+      // Sem H.264 nessa resolução: em MP4 o arquivo é convertido (mais demorado).
+      const conv = q.h264 === false ? ' · converte p/ H.264' : '';
+      opts.push({ value: String(q.height), label: `${q.height}p${fps}${size}${conv}` });
     }
   } else {
     PRESET_HEIGHTS.forEach((h) => opts.push({ value: String(h), label: `Até ${h}p` }));
@@ -145,7 +147,7 @@ function optionsHtml(info) {
       ${opts.map((o) => `<option value="${o.value}" ${o.value === sel ? 'selected' : ''}>${esc(o.label)}</option>`).join('')}
     </select>
     <select class="c-select" ${sel.startsWith('audio') ? 'hidden' : ''}>
-      <option value="mp4" ${container === 'mp4' ? 'selected' : ''}>MP4</option>
+      <option value="mp4" ${container === 'mp4' ? 'selected' : ''} title="H.264 + AAC, abre no Premiere Pro">MP4 (Premiere)</option>
       <option value="mkv" ${container === 'mkv' ? 'selected' : ''}>MKV</option>
     </select>`;
 }
@@ -388,7 +390,11 @@ function jobRowHtml(j) {
     if (j.speed) parts.push(`${fmtBytes(j.speed)}/s`);
     if (j.eta != null) parts.push(`restam ${fmtEta(j.eta)}`);
   } else if (j.status === 'processing') {
-    parts.push('Juntando/convertendo com ffmpeg…');
+    if (j.phase === 'convert') {
+      const how = j.encoder && j.encoder !== 'libx264' ? 'placa de vídeo' : 'processador';
+      parts.push(`Convertendo para H.264 (Premiere, ${how})… ${j.percent.toFixed(0)}%`);
+    }
+    else parts.push('Juntando/convertendo com ffmpeg…');
   } else if (j.status === 'done' && j.total) {
     parts.push(fmtBytes(j.total));
   }
@@ -657,6 +663,7 @@ function renderSettings() {
   $('#setSubLangs').value = s.subLangs || '';
   $('#setAutoSubs').checked = !!s.autoSubs;
   $('#setSponsor').checked = !!s.sponsorBlock;
+  $('#setGpu').checked = s.gpuEncode !== false;
   $('#setNotify').checked = !!s.notify;
   $('#setCheckUpdates').checked = !!s.checkUpdates;
   $('#setClipboard').checked = !!s.watchClipboard;
@@ -693,6 +700,7 @@ const CHECKS = {
   setSubs: 'embedSubs',
   setAutoSubs: 'autoSubs',
   setSponsor: 'sponsorBlock',
+  setGpu: 'gpuEncode',
   setNotify: 'notify',
   setCheckUpdates: 'checkUpdates',
   setClipboard: 'watchClipboard',

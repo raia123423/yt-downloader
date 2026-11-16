@@ -14,6 +14,7 @@ Só para Windows 10/11 64 bits.
 ## Recursos
 
 - Analisa o link e lista as qualidades disponíveis (com tamanho aproximado), MP4 ou MKV
+- MP4 sempre em H.264 + AAC, compatível com o Premiere Pro: acima de 1080p (onde o YouTube só oferece AV1/VP9) o vídeo é convertido automaticamente, usando a placa de vídeo (NVIDIA, Intel ou AMD) quando disponível
 - Somente áudio em M4A ou MP3
 - Escolha do idioma do áudio em vídeos dublados
 - Baixar só um trecho do vídeo (início e fim)
@@ -25,7 +26,7 @@ Só para Windows 10/11 64 bits.
 - Histórico com busca, abrir arquivo, mostrar na pasta e baixar de novo
 - Cole com Ctrl+V em qualquer lugar da janela, arraste o link do navegador, ou use a sugestão de link copiado
 - Notificação do Windows quando um download termina com o app em segundo plano
-- Configurações: cookies do navegador ou arquivo cookies.txt, capa embutida, legendas embutidas, SponsorBlock
+- Configurações: cookies do navegador ou arquivo cookies.txt, capa embutida, legendas embutidas, SponsorBlock, conversão pela placa de vídeo
 - Avisa quando há versão nova do yt-dlp; botão **Atualizar yt-dlp** (roda `yt-dlp -U`)
 - Transmissões ao vivo ou agendadas são bloqueadas (só dá para baixar depois que terminam)
 - yt-dlp, ffmpeg e Deno embutidos no instalador
@@ -49,8 +50,8 @@ npm run dist         # gera o instalador e a versão portátil em dist/
 
 Em `dist/` você vai encontrar:
 
-- `YT Downloader Setup 1.0.0.exe`: instalador
-- `YT-Downloader-Portable-1.0.0.exe`: executável portátil, não precisa instalar
+- `YT Downloader Setup 1.1.0.exe`: instalador
+- `YT-Downloader-Portable-1.1.0.exe`: executável portátil, não precisa instalar
 
 Para baixar versões novas dos binários antes de um build: `npm run fetch-bin:force`.
 
